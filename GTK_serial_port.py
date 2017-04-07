@@ -1,25 +1,24 @@
 # coding: utf8
 import gi
-
 gi.require_version('Gtk', '3.0')
-from gi.repository import Gtk
-
+from gi.repository import Gtk, Gdk
 import serial
 from struct import unpack
 from binascii import unhexlify
 import threading
+import time
 
 
 class ConnectSerial(Gtk.Window):
     def __init__(self):
 
-
         self.timeout, self.writeTimeout = 10, 5
-
         # initialisation du port série SANS configuration
         self.portSerial = serial.Serial(timeout=self.timeout, writeTimeout=self.writeTimeout)
 
-        # Fenetre de configuration
+        ########################
+        #        WINDOWS       #
+        ########################
         Gtk.Window.__init__(self, title="Connection série Arduino")
         self.set_border_width(10)
         self.set_border_width(10)
@@ -27,16 +26,15 @@ class ConnectSerial(Gtk.Window):
         header = Gtk.HeaderBar(title="Connection Arduino")
         header.set_subtitle("configuration port série ")
         header.props.show_close_button = True
-
         self.set_titlebar(header)
 
 
         vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
 
-        # frame de la fenetre de configuration
-
-        # Nom du port série
-
+        ########################
+        #        COMBOBOX      #
+        #   Nom du port série  #
+        ########################
         portList = ["/dev/ttyUSB0", "/dev/ttyUSB1"]
         portName_store = Gtk.ListStore(str)
 
@@ -50,8 +48,10 @@ class ConnectSerial(Gtk.Window):
         portName_combo.add_attribute(renderer_text, "text", 0)
         vbox.pack_start(portName_combo, False, False, True)
 
-        # Vitesse port série
-
+        ########################
+        #        COMBOBOX      #
+        #        Baudrate      #
+        ########################
         baudRate_list = ["300", "1200", "2400", "4800", "9600", "19200", "28800", "38400", "57600", "115200", "230400"]
         baudRate_store = Gtk.ListStore(str)
 
@@ -65,23 +65,38 @@ class ConnectSerial(Gtk.Window):
         baudRate_combo.add_attribute(renderer_text, "text", 0)
         vbox.pack_start(baudRate_combo, False, False, True)
 
-        # Bouton de connection
-        button = Gtk.ToggleButton("Connecter")
-        button.connect("toggled", self.on_connect_clicked)
-        vbox.pack_start(button, True, True, 0)
+        ########################
+        #         BOUTON       #
+        #       Connection     #
+        ########################
+        button_connect = Gtk.ToggleButton("Connecter", name ='button_connect')
+        button_connect.set_label("Connection")
+        button_connect.connect("toggled", self.on_connect_clicked)
+        vbox.pack_start(button_connect, True, True, 0)
 
-        # Bouton Led
+        ########################
+        #         BOUTON       #
+        #          Led         #
+        ########################
         button_led = Gtk.ToggleButton("Led ON/OFF")
         button_led.connect("clicked", self.on_button_led_clicked)
         vbox.pack_start(button_led, True, True, 0)
 
-        # Label de connection
-
+        ########################
+        #         LABEL        #
+        #        Status        #
+        ########################
         self.label1 = Gtk.Label("", xalign=0)
         self.label1.set_text('Connection: ' + str(self.portSerial.isOpen()))
         vbox.pack_start(self.label1, True, True, 0)
         self.add(vbox)
 
+        #self.radioStatus = Gtk.RadioButon( , xalign=0)
+
+
+    ########################
+    #      SIGNAUX GTK     #
+    ########################
     def on_portName_combo_changed(self, combo):
         tree_iter = combo.get_active_iter()
         if tree_iter is not None:
@@ -99,13 +114,43 @@ class ConnectSerial(Gtk.Window):
             self.conf_baudrate(baudRate)
 
     def on_connect_clicked(self, button):
+        ctx = button.get_style_context()
         if button.get_active():
-            self.open()
-            self.thread = threading.Thread(target=self.read_from_port, args=(self.portSerial,))
-            self.thread.start()
+
+            # Vérifie que la configuration du port série
+            if self.portSerial.portstr  != None:
+                self.thread_connect = threading.Thread(target=self.open)
+                self.thread_read = threading.Thread(target=self.read_from_port, args=(self.portSerial,))
+                self.thread_connect.start()
+
+
+                # Vérifie que le thread_connect est bien lancé
+                if self.thread_connect.isAlive:
+                    ctx.add_class('connect')
+                    button.set_label("Connecter")
+
+                    # lance la lecture sur le port série
+                    self.thread_read.start()
+                    print ("Lecture du port série")
+                    print ('Lecture : ' + str(self.thread_read.name))
+                else:
+                    button.set_active(False)
+
+            # Vérifie que la configuration du baudrate
+            elif self.portSerial.BAUDRATES == None:
+                button.set_label("Connection")
+                button.set_active(False)
+
+            else:
+                button.set_label("Connection")
+                button.set_active(False)
+
         else:
+            ctx.remove_class('connect')
             self.close()
-            self.thread.destroy()
+            self.thread_connect.join(0)
+            self.thread_read.join(0)
+
 
     def on_button_led_clicked(self, button):
         if button.get_active():
@@ -114,7 +159,9 @@ class ConnectSerial(Gtk.Window):
             self.send(b'off')
 
     #################################
-    ##     CONIGURATION DU PORT     #
+    ##           METHODES          ##
+    ##     CONIGURATION DU PORT    ##
+    ##           Pyserial          ##
     #################################
     def conf_baudrate(self, baudrate):
         """configuation de la vitesse du port série"""
@@ -140,28 +187,29 @@ class ConnectSerial(Gtk.Window):
         """ Ouverture du port série."""
 
         if self.portSerial.isOpen() == 0:
-            print("Port        : " + str(self.portSerial.port))
-            print("Baurate     : " + str(self.portSerial.baudrate))
-            print("Timeout     : " + str(self.portSerial.timeout))
-            print('writeTimeout: ' + str(self.portSerial.writeTimeout))
-            print('bytesize    : ' + str(self.portSerial.bytesize))
-            print('parity      : ' + str(self.portSerial.parity))
-            print('stopbits    : ' + str(self.portSerial.stopbits))
-            print('xonxoff     : ' + str(self.portSerial.xonxoff))
-            print('rtscts      : ' + str(self.portSerial.rtscts))
-            print('dsrdtr      : ' + str(self.portSerial.dsrdtr))
+            #print("Port        : " + str(self.portSerial.port))
+            #print("Baurate     : " + str(self.portSerial.baudrate))
+            #print("Timeout     : " + str(self.portSerial.timeout))
+            #print('writeTimeout: ' + str(self.portSerial.writeTimeout))
+            #print('bytesize    : ' + str(self.portSerial.bytesize))
+            #print('parity      : ' + str(self.portSerial.parity))
+            #print('stopbits    : ' + str(self.portSerial.stopbits))
+            #print('xonxoff     : ' + str(self.portSerial.xonxoff))
+            #print('rtscts      : ' + str(self.portSerial.rtscts))
+            #print('dsrdtr      : ' + str(self.portSerial.dsrdtr))
 
             self.portSerial.port = self.portSerial.port
             self.portSerial.baudrate = self.portSerial.baudrate
             self.portSerial.open()
             self.label1.set_text('Connection: ' + str(self.portSerial.isOpen()))
-            print('connection : ' + str(self.portSerial.isOpen()))
-            self.send(b'on')
+            #print('connection : ' + str(self.portSerial.isOpen()))
+            self.send(b'off')
 
         else:
             val = "Configurer le port avant de l'ouvrir"
             print(val)
-        print(self.portSerial)
+
+        #print(self.portSerial)
 
     def close(self):
         """ Fermeture du port série."""
@@ -184,20 +232,23 @@ class ConnectSerial(Gtk.Window):
 
     def handle_data(self, data):
         print(data)
-        # self.portSerial.write(b"test")
 
-    def read_from_port(self, serial_port):
+    def read_from_port(self):
         """reception de données depuis le port série
         Attention le timeout est à modifier si il n'y
         a pas de donées lisible sur le port . Un delai peut etre nécessaire à l'initialisation
         de la carte Arduino et à l'établissement de la connection.
         """
+        time.sleep(1)
         while self.portSerial.isOpen():
-            # print(serin)
+            reading = self.portSerial.readline().decode()
+            print(reading)
 
-            while True:
-                reading = self.portSerial.readline().decode()
-                self.handle_data(reading)
+    cssProvider = Gtk.CssProvider()
+    cssProvider.load_from_path('style.css')
+    screen = Gdk.Screen.get_default()
+    styleContext = Gtk.StyleContext()
+    styleContext.add_provider_for_screen(screen, cssProvider, Gtk.STYLE_PROVIDER_PRIORITY_USER)
 
 
 if __name__ == '__main__':
