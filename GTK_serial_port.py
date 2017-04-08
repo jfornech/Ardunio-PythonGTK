@@ -3,6 +3,7 @@ import gi
 gi.require_version('Gtk', '3.0')
 from gi.repository import Gtk, Gdk
 import serial
+from serial.tools import list_ports
 from struct import unpack
 from binascii import unhexlify
 import threading
@@ -15,6 +16,11 @@ class ConnectSerial(Gtk.Window):
         self.timeout, self.writeTimeout = 10, 5
         # initialisation du port série SANS configuration
         self.portSerial = serial.Serial(timeout=self.timeout, writeTimeout=self.writeTimeout)
+
+        self.thread_connect = threading.Thread(target=self.open)
+        self.thread_connect.setName("Thread_connect")
+        self.thread_read = threading.Thread(target=self.read_from_port, args=(self.portSerial,))
+        self.thread_read.setName("Thread_read")
 
         ########################
         #        WINDOWS       #
@@ -35,7 +41,12 @@ class ConnectSerial(Gtk.Window):
         #        COMBOBOX      #
         #   Nom du port série  #
         ########################
-        portList = ["/dev/ttyUSB0", "/dev/ttyUSB1"]
+
+        # liste des ports série disponible
+        portList = []
+        for port in list_ports.comports():
+            portList.append(port.device)
+
         portName_store = Gtk.ListStore(str)
 
         for portName in portList:
@@ -46,6 +57,7 @@ class ConnectSerial(Gtk.Window):
         renderer_text = Gtk.CellRendererText()
         portName_combo.pack_start(renderer_text, True)
         portName_combo.add_attribute(renderer_text, "text", 0)
+        portName_combo.set_active(0)
         vbox.pack_start(portName_combo, False, False, True)
 
         ########################
@@ -63,6 +75,7 @@ class ConnectSerial(Gtk.Window):
         renderer_text = Gtk.CellRendererText()
         baudRate_combo.pack_start(renderer_text, True)
         baudRate_combo.add_attribute(renderer_text, "text", 0)
+        baudRate_combo.set_active(4)
         vbox.pack_start(baudRate_combo, False, False, True)
 
         ########################
@@ -81,6 +94,14 @@ class ConnectSerial(Gtk.Window):
         button_led = Gtk.ToggleButton("Led ON/OFF")
         button_led.connect("clicked", self.on_button_led_clicked)
         vbox.pack_start(button_led, True, True, 0)
+
+        ########################
+        #         BOUTON       #
+        #         read         #
+        ########################
+        button_read = Gtk.ToggleButton("Lecture ON/OFF")
+        button_read.connect("clicked", self.on_button_read_clicked)
+        vbox.pack_start(button_read, True, True, 0)
 
         ########################
         #         LABEL        #
@@ -113,33 +134,28 @@ class ConnectSerial(Gtk.Window):
             print("Selected: baudRate=%s" % baudRate)
             self.conf_baudrate(baudRate)
 
+
     def on_connect_clicked(self, button):
         ctx = button.get_style_context()
         if button.get_active():
 
             # Vérifie que la configuration du port série
-            if self.portSerial.portstr  != None:
-                self.thread_connect = threading.Thread(target=self.open)
-                self.thread_read = threading.Thread(target=self.read_from_port, args=(self.portSerial,))
-                self.thread_connect.start()
+            if self.portSerial.portstr  != None and self.portSerial.BAUDRATES != None:
 
+                self.thread_connect.start()
+                button.set_label("Connection")
 
                 # Vérifie que le thread_connect est bien lancé
-                if self.thread_connect.isAlive:
+                if self.thread_connect.isAlive():
                     ctx.add_class('connect')
                     button.set_label("Connecter")
 
                     # lance la lecture sur le port série
-                    self.thread_read.start()
+
                     print ("Lecture du port série")
-                    print ('Lecture : ' + str(self.thread_read.name))
+
                 else:
                     button.set_active(False)
-
-            # Vérifie que la configuration du baudrate
-            elif self.portSerial.BAUDRATES == None:
-                button.set_label("Connection")
-                button.set_active(False)
 
             else:
                 button.set_label("Connection")
@@ -152,11 +168,23 @@ class ConnectSerial(Gtk.Window):
             self.thread_read.join(0)
 
 
+    def on_button_read_clicked(self, button):
+        if button.get_active() == True:
+            self.thread_read.start()
+            print(str(self.thread_read.name) + ': ' + str(self.thread_read.isAlive))
+        if button.get_active() == False:
+            print('Lecture : ' + str(self.thread_read.name))
+            self.thread_read.join(0)
+
+
+
     def on_button_led_clicked(self, button):
         if button.get_active():
             self.send(b'on')
         else:
             self.send(b'off')
+
+
 
     #################################
     ##           METHODES          ##
@@ -186,7 +214,7 @@ class ConnectSerial(Gtk.Window):
     def open(self):
         """ Ouverture du port série."""
 
-        if self.portSerial.isOpen() == 0:
+        if self.portSerial.isOpen() == False:
             #print("Port        : " + str(self.portSerial.port))
             #print("Baurate     : " + str(self.portSerial.baudrate))
             #print("Timeout     : " + str(self.portSerial.timeout))
@@ -203,13 +231,12 @@ class ConnectSerial(Gtk.Window):
             self.portSerial.open()
             self.label1.set_text('Connection: ' + str(self.portSerial.isOpen()))
             #print('connection : ' + str(self.portSerial.isOpen()))
-            self.send(b'off')
+            #self.send(b'off')
 
         else:
             val = "Configurer le port avant de l'ouvrir"
             print(val)
 
-        #print(self.portSerial)
 
     def close(self):
         """ Fermeture du port série."""
@@ -233,13 +260,13 @@ class ConnectSerial(Gtk.Window):
     def handle_data(self, data):
         print(data)
 
-    def read_from_port(self):
+    def read_from_port(self,data):
         """reception de données depuis le port série
         Attention le timeout est à modifier si il n'y
         a pas de donées lisible sur le port . Un delai peut etre nécessaire à l'initialisation
         de la carte Arduino et à l'établissement de la connection.
         """
-        time.sleep(1)
+        #time.sleep(1)
         while self.portSerial.isOpen():
             reading = self.portSerial.readline().decode()
             print(reading)
